@@ -1,0 +1,12 @@
+- name: Get latest release tag
+  id: latest_release
+  run: |
+    LATEST_RELEASE_TAG=$(curl --silent --location --request GET "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest" \
+    --header "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+    --header "Accept: application/vnd.github+json" | jq '.tag_name' --raw-output)
+    echo "Latest release tag: $LATEST_RELEASE_TAG"
+    echo "::set-output name=tag_name::$LATEST_RELEASE_TAG"
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+- name: Install jq
+  run: sudo apt-get install jq
