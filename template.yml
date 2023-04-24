@@ -1,0 +1,75 @@
+name: Gradle Publish
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v2
+        with:
+          distribution: 'temurin'
+          java-version: 11
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v2
+        with:
+          path: ~/.gradle/caches
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Calculate next version
+        id: calculate-version
+        run: |
+          git fetch --tags
+          LAST_VERSION=$(git describe --tags --abbrev=0)
+          echo "Last version: $LAST_VERSION"
+          
+          PR_NAME=$(git log -1 --pretty=%B | grep -oE "\[(chore|feat|fix|refactor)\]")
+          echo "Keyword: $PR_NAME"
+          
+          case $PR_NAME in
+            [chore])
+              VERSION=$(echo $LAST_VERSION | awk -F. '{$1++; printf("%s.%s.%s", $1, $2, $3)}')
+              ;;
+            [feat])
+              VERSION=$(echo $LAST_VERSION | awk -F. '{$2++; printf("%s.%s.%s", $1, $2, $3)}')
+              ;;
+            [fix])
+              VERSION=$(echo $LAST_VERSION | awk -F. '{$3++; printf("%s.%s.%s", $1, $2, $3)}')
+              ;;
+            *)
+              VERSION="${LAST_VERSION}-SNAPSHOT"
+              ;;
+          esac
+          
+          echo "Next version: $VERSION"
+          echo "RELEASE_VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Build and publish
+        run: |
+          ./gradlew build
+          ./gradlew publish --stacktrace -Pversion=$RELEASE_VERSION
+        env:
+          ARTIFACTORY_USER: ${{ secrets.ARTIFACTORY_USER }}
+          ARTIFACTORY_API_KEY: ${{ secrets.ARTIFACTORY_API_KEY }}
+
+      - name: Create GitHub Release
+        if: "!contains(env.RELEASE_VERSION, 'SNAPSHOT')"
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.RELEASE_VERSION }}
+          release_name: Release ${{ env.RELEASE_VERSION }}
