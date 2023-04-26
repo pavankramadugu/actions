@@ -1,0 +1,20 @@
+name: Install JDK on Alpine Linux
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  install-jdk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Install OpenJDK 11
+        run: |
+          apk update
+          apk add --no-cache openjdk11
+          echo "JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))" >> $GITHUB_ENV
