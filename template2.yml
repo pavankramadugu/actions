@@ -1,19 +1,47 @@
-- name: Get latest release tag
-  id: latest_release
-  run: |
-    LATEST_RELEASE_TAG=$(gh release list --repo $GITHUB_REPOSITORY --limit 1 --json tagName | jq '.[0].tagName' --raw-output)
-    echo "Latest release tag: $LATEST_RELEASE_TAG"
-    echo "::set-output name=tag_name::$LATEST_RELEASE_TAG"
-  env:
-    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+name: Publish GitHub Release
 
+on:
+  workflow_dispatch:  # Allows manual triggering of the workflow
 
-- name: Install and configure GitHub CLI
-  run: |
-    sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-key C99B11DEB97541F0
-    sudo apt-add-repository https://cli.github.com/packages
-    sudo apt-get update
-    sudo apt-get install gh
-    gh config set -h github.com oauth_token ${{ secrets.GITHUB_TOKEN }}
-  env:
-    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v2
+        with:
+          distribution: 'temurin'
+          java-version: 11
+
+      - name: Install and configure GitHub CLI
+        run: |
+          sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-key C99B11DEB97541F0
+          sudo apt-add-repository https://cli.github.com/packages
+          sudo apt-get update
+          sudo apt-get install gh
+          gh config set -h github.com oauth_token ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish
+        run: |
+          ./gradlew build
+          ./gradlew publish --stacktrace
+        env:
+          ARTIFACTORY_USER: ${{ secrets.ARTIFACTORY_USER }}
+          ARTIFACTORY_API_KEY: ${{ secrets.ARTIFACTORY_API_KEY }}
+
+      - name: Create GitHub Release
+        run: |
+          TAG_VERSION="1.0.0"  # Replace with the desired tag version
+          RELEASE_NAME="Release $TAG_VERSION"
+          gh release create $TAG_VERSION --repo $GITHUB_REPOSITORY --title "$RELEASE_NAME"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
