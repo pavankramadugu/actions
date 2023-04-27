@@ -1,20 +1,53 @@
-name: Install JDK on Alpine Linux
+name: Gradle Build and Publish
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      build:
+        description: 'Build the project'
+        required: false
+        default: 'true'
+      release:
+        description: 'Release the Gradle snapshot to Artifactory'
+        required: false
+        default: 'false'
+      version:
+        description: 'Version to be published'
+        required: true
+        default: ''
 
 jobs:
-  install-jdk:
+  build-and-publish:
     runs-on: ubuntu-latest
-
+    if: ${{ github.event.inputs.build == 'true' || github.event.inputs.release == 'true' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
+        with:
+          ref: ${{ github.event.inputs.branch }}
 
-      - name: Install OpenJDK 11
+      - name: Set up JDK
+        uses: actions/setup-java@v2
+        with:
+          distribution: 'temurin'
+          java-version: 11
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v2
+        with:
+          path: ~/.gradle/caches
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Build
+        if: ${{ github.event.inputs.build == 'true' }}
+        run: ./gradlew build
+
+      - name: Publish
+        if: ${{ github.event.inputs.release == 'true' }}
         run: |
-          apk update
-          apk add --no-cache openjdk11
-          echo "JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))" >> $GITHUB_ENV
+          ./gradlew publish --stacktrace -Pversion=${{ github.event.inputs.version }}
+        env:
+          ARTIFACTORY_USER: ${{ secrets.ARTIFACTORY_USER }}
+          ARTIFACTORY_API_KEY: ${{ secrets.ARTIFACTORY_API_KEY }}
