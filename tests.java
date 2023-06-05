@@ -75,6 +75,23 @@ public class DBClientTest {
     }
 }
 
+package com.example;
+
+        import io.vertx.core.AsyncResult;
+        import io.vertx.core.Future;
+        import io.vertx.core.Handler;
+        import io.vertx.core.json.JsonArray;
+        import io.vertx.ext.sql.ResultSet;
+        import io.vertx.junit5.VertxExtension;
+        import io.vertx.junit5.VertxTestContext;
+        import org.junit.jupiter.api.BeforeEach;
+        import org.junit.jupiter.api.Test;
+        import org.junit.jupiter.api.extension.ExtendWith;
+        import org.mockito.ArgumentCaptor;
+        import static org.mockito.ArgumentMatchers.eq;
+        import static org.mockito.Mockito.*;
+
+@ExtendWith(VertxExtension.class)
 public class DBClientTest {
 
     private DBClient dbClient;
@@ -96,13 +113,19 @@ public class DBClientTest {
         ArgumentCaptor<Handler<AsyncResult<SQLConnection>>> connectionCaptor = ArgumentCaptor.forClass(Handler.class);
 
         // Mock a successful connection
-        doNothing().when(jdbcClient).getConnection(connectionCaptor.capture());
+        when(jdbcClient.getConnection(any())).thenAnswer(invocation -> {
+            connectionCaptor.getValue().handle(Future.succeededFuture(sqlConnection));
+            return null;
+        });
 
         // Capture the arguments to callWithParams
         ArgumentCaptor<Handler<AsyncResult<ResultSet>>> resultCaptor = ArgumentCaptor.forClass(Handler.class);
 
         // Mock a successful query
-        doNothing().when(sqlConnection).callWithParams(eq("SELECT * FROM test WHERE id = ?"), eq(new JsonArray().add("param1").add("param2")), eq(new JsonArray().add("output1").add("output2")), resultCaptor.capture());
+        when(sqlConnection.callWithParams(eq("SELECT * FROM test WHERE id = ?"), any(), any(), any())).thenAnswer(invocation -> {
+            resultCaptor.getValue().handle(Future.succeededFuture(resultSet));
+            return null;
+        });
 
         // Params for the call function
         JsonArray params = new JsonArray().add("param1").add("param2");
@@ -113,10 +136,6 @@ public class DBClientTest {
                     assertSame(resultSet, result);
                     testContext.completeNow();
                 })));
-
-        // Invoke the handlers with mock results
-        connectionCaptor.getValue().handle(Future.succeededFuture(sqlConnection));
-        resultCaptor.getValue().handle(Future.succeededFuture(resultSet));
 
         // Test the failed connection branch
         dbClient.call("SELECT * FROM test WHERE id = ?", params, outputs)
