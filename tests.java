@@ -1,156 +1,84 @@
+package com.example;
+
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.json.JsonArray;
-import io.vertx.ext.sql.SQLConnection;
-import io.vertx.ext.sql.UpdateResult;
+import io.vertx.ext.sql.ResultSet;
+import io.vertx.ext.unit.junit.VertxExtension;
+import io.vertx.junit5.VertxTestContext;
+import io.vertx.junit5.VertxExtension;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
-import java.util.Arrays;
-import java.util.Collections;
-
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
-public class JdbcServiceTest {
+@ExtendWith(VertxExtension.class)
+public class DBClientTest {
 
-    @Test
-    void testExecuteInTransaction_Success() {
-        JDBCClient client = mock(JDBCClient.class);
-        SQLConnection connection = mock(SQLConnection.class);
-        JdbcService jdbcService = new JdbcService(client);
+    private DBClient dbClient;
+    private JDBCClient jdbcClient;
 
-        when(client.getConnection(any())).thenAnswer(invocation -> {
-            Handler<AsyncResult<SQLConnection>> handler = invocation.getArgument(0);
-            handler.handle(Future.succeededFuture(connection));
-            return null;
-        });
-
-        when(connection.updateWithParams(any(), any(), any())).thenAnswer(invocation -> {
-            Handler<AsyncResult<UpdateResult>> handler = invocation.getArgument(2);
-            handler.handle(Future.succeededFuture(new UpdateResult()));
-            return connection;
-        });
-
-        jdbcService.executeInTransaction(Arrays.asList("sql1", "sql2"), Arrays.asList(new JsonArray(), new JsonArray())).setHandler(ar -> {
-            assertTrue(ar.succeeded());
-        });
-
-        verify(client, times(1)).getConnection(any());
-        verify(connection, times(2)).updateWithParams(any(), any(), any());
-        verify(connection, times(1)).commit(any());
-        verify(connection, times(1)).close();
+    @BeforeEach
+    void setUp() {
+        jdbcClient = Mockito.mock(JDBCClient.class);
+        dbClient = new DBClient(jdbcClient);
     }
 
     @Test
-    void testExecuteInTransaction_GetConnectionFailure() {
-        JDBCClient client = mock(JDBCClient.class);
-        JdbcService jdbcService = new JdbcService(client);
+    void testCall(VertxTestContext testContext) {
+        // Mock connection and result set
+        SQLConnection sqlConnection = Mockito.mock(SQLConnection.class);
+        ResultSet resultSet = Mockito.mock(ResultSet.class);
 
-        when(client.getConnection(any())).thenAnswer(invocation -> {
-            Handler<AsyncResult<SQLConnection>> handler = invocation.getArgument(0);
-            handler.handle(Future.failedFuture("Connection failure"));
-            return null;
-        });
+        // Capture the argument to getConnection
+        ArgumentCaptor<Handler<AsyncResult<SQLConnection>>> connectionCaptor = ArgumentCaptor.forClass(Handler.class);
 
-        jdbcService.executeInTransaction(Arrays.asList("sql1", "sql2"), Arrays.asList(new JsonArray(), new JsonArray())).setHandler(ar -> {
-            assertTrue(ar.failed());
-            assertEquals("Connection failure", ar.cause().getMessage());
-        });
+        // Mock a successful connection
+        doNothing().when(jdbcClient).getConnection(connectionCaptor.capture());
 
-        verify(client, times(1)).getConnection(any());
-    }
+        // Capture the arguments to callWithParams
+        ArgumentCaptor<Handler<AsyncResult<ResultSet>>> resultCaptor = ArgumentCaptor.forClass(Handler.class);
 
-    @Test
-    void testExecuteInTransaction_SetAutoCommitFailure() {
-        JDBCClient client = mock(JDBCClient.class);
-        SQLConnection connection = mock(SQLConnection.class);
-        JdbcService jdbcService = new JdbcService(client);
+        // Mock a successful query
+        doNothing().when(sqlConnection).callWithParams(eq("SELECT * FROM test WHERE id = ?"), eq(new JsonArray().add("param1").add("param2")), eq(new JsonArray().add("output1").add("output2")), resultCaptor.capture());
 
-        when(client.getConnection(any())).thenAnswer(invocation -> {
-            Handler<AsyncResult<SQLConnection>> handler = invocation.getArgument(0);
-            handler.handle(Future.succeededFuture(connection));
-            return null;
-        });
+        // Params for the call function
+        JsonArray params = new JsonArray().add("param1").add("param2");
+        JsonArray outputs = new JsonArray().add("output1").add("output2");
 
-        doAnswer(invocation -> {
-            Handler<AsyncResult<Void>> handler = invocation.getArgument(0);
-            handler.handle(Future.failedFuture("Auto commit failure"));
-            return null;
-        }).when(connection).setAutoCommit(eq(false), any());
+        dbClient.call("SELECT * FROM test WHERE id = ?", params, outputs)
+                .onComplete(testContext.succeeding(result -> testContext.verify(() -> {
+                    assertSame(resultSet, result);
+                    testContext.completeNow();
+                })));
 
-        jdbcService.executeInTransaction(Arrays.asList("sql1", "sql2"), Arrays.asList(new JsonArray(), new JsonArray())).setHandler(ar -> {
-            assertTrue(ar.failed());
-            assertEquals("Auto commit failure", ar.cause().getMessage());
-        });
+        // Invoke the handlers with mock results
+        connectionCaptor.getValue().handle(Future.succeededFuture(sqlConnection));
+        resultCaptor.getValue().handle(Future.succeededFuture(resultSet));
 
-        verify(client, times(1)).getConnection(any());
-        verify(connection, times(1)).setAutoCommit(eq(false), any());
-    }
+        // Test the failed connection branch
+        dbClient.call("SELECT * FROM test WHERE id = ?", params, outputs)
+                .onComplete(testContext.failing(throwable -> testContext.verify(() -> {
+                    assertEquals("Failed to get connection", throwable.getMessage());
+                    testContext.completeNow();
+                })));
 
-    @Test
-    void testExecuteInTransaction_SQLOperationFailure() {
-        JDBCClient client = mock(JDBCClient.class);
-        SQLConnection connection = mock(SQLConnection.class);
-        JdbcService jdbcService = new JdbcService(client);
+        // Invoke the handler with a failure
+        connectionCaptor.getValue().handle(Future.failedFuture("Failed to get connection"));
 
-        when(client.getConnection(any())).thenAnswer(invocation -> {
-            Handler<AsyncResult<SQLConnection>> handler = invocation.getArgument(0);
-            handler.handle(Future.succeededFuture(connection));
-            return null;
-        });
+        // Test the failed query branch
+        dbClient.call("SELECT * FROM test WHERE id = ?", params, outputs)
+                .onComplete(testContext.failing(throwable -> testContext.verify(() -> {
+                    assertEquals("Failed to execute query", throwable.getMessage());
+                    testContext.completeNow();
+                })));
 
-        when(connection.updateWithParams(any(), any(), any())).thenAnswer(invocation -> {
-            Handler<AsyncResult<UpdateResult>> handler = invocation.getArgument(2);
-            handler.handle(Future.failedFuture("SQL operation failure"));
-            return connection;
-        });
-
-        jdbcService.executeInTransaction(Arrays.asList("sql1", "sql2"), Arrays.asList(new JsonArray(), new JsonArray())).setHandler(ar -> {
-            assertTrue(ar.failed());
-            assertEquals("SQL operation failure", ar.cause().getMessage());
-        });
-
-        verify(client, times(1)).getConnection(any());
-        verify(connection, times(1)).updateWithParams(any(), any(), any());
-        verify(connection, times(1)).rollback(any());
-        verify(connection, times(1)).close();
-    }
-
-    @Test
-    void testExecuteInTransaction_CommitFailure() {
-        JDBCClient client = mock(JDBCClient.class);
-        SQLConnection connection = mock(SQLConnection.class);
-        JdbcService jdbcService = new JdbcService(client);
-
-        when(client.getConnection(any())).thenAnswer(invocation -> {
-            Handler<AsyncResult<SQLConnection>> handler = invocation.getArgument(0);
-            handler.handle(Future.succeededFuture(connection));
-            return null;
-        });
-
-        when(connection.updateWithParams(any(), any(), any())).thenAnswer(invocation -> {
-            Handler<AsyncResult<UpdateResult>> handler = invocation.getArgument(2);
-            handler.handle(Future.succeededFuture(new UpdateResult()));
-            return connection;
-        });
-
-        doAnswer(invocation -> {
-            Handler<AsyncResult<Void>> handler = invocation.getArgument(0);
-            handler.handle(Future.failedFuture("Commit failure"));
-            return null;
-        }).when(connection).commit(any());
-
-        jdbcService.executeInTransaction(Arrays.asList("sql1", "sql2"), Arrays.asList(new JsonArray(), new JsonArray())).setHandler(ar -> {
-            assertTrue(ar.failed());
-            assertEquals("Commit failure", ar.cause().getMessage());
-        });
-
-        verify(client, times(1)).getConnection(any());
-        verify(connection, times(2)).updateWithParams(any(), any(), any());
-        verify(connection, times(1)).commit(any());
-        verify(connection, times(1)).close();
+        // Invoke the handler with a failure
+        resultCaptor.getValue().handle(Future.failedFuture("Failed to execute query"));
     }
 }
