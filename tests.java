@@ -1,67 +1,53 @@
-@Test
-void testSelectWithoutParams(VertxTestContext testContext) {
-        // Mock connection and result set
-        SQLConnection sqlConnection = Mockito.mock(SQLConnection.class);
-        ResultSet resultSet = Mockito.mock(ResultSet.class);
+import io.vertx.core.Vertx;
+import io.vertx.core.json.JsonObject;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
-        // Prepare the expected SQL query
-        String expectedSql = "SELECT * FROM test";
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.*;
 
-        // Mock a successful connection
-        when(jdbcClient.getConnection(any())).thenAnswer(invocation -> {
-        Handler<AsyncResult<SQLConnection>> handler = invocation.getArgument(0);
-        handler.handle(Future.succeededFuture(sqlConnection));
-        return null;
-        });
+class DatabaseClientFactoryTest {
+    private Vertx vertx;
+    private DatabaseClientFactory factory;
 
-        // Mock a successful query
-        when(sqlConnection.query(eq(expectedSql), any())).thenAnswer(invocation -> {
-        Handler<AsyncResult<ResultSet>> handler = invocation.getArgument(1);
-        handler.handle(Future.succeededFuture(resultSet));
-        return null;
-        });
+    @BeforeEach
+    void setup() {
+        vertx = Mockito.mock(Vertx.class);
+        factory = DatabaseClientFactory.getInstance();
+    }
 
-        // Call the select method without params
-        dbClient.select(expectedSql)
-        .onComplete(testContext.succeeding(result -> testContext.verify(() -> {
-        assertSame(resultSet, result);
-        testContext.completeNow();
-        })));
-        }
+    @Test
+    void testGetClientWithExistingClient() {
+        JsonObject config = new JsonObject().put("dataSourceName", "existingDataSource");
 
+        // Setup an existing client in the map
+        DatabaseClient existingClient = Mockito.mock(DatabaseClient.class);
+        factory.getClient(vertx, config);  // this line puts the client into the map
 
+        DatabaseClient client = factory.getClient(vertx, config);
 
-@Test
-void testSelectWithParams(VertxTestContext testContext) {
-        // Mock connection and result set
-        SQLConnection sqlConnection = Mockito.mock(SQLConnection.class);
-        ResultSet resultSet = Mockito.mock(ResultSet.class);
+        assertThat(client).isNotNull();
+        assertThat(client).isSameAs(existingClient);
+    }
 
-        // Prepare the expected SQL query and parameters
-        String expectedSql = "SELECT * FROM test WHERE id = ?";
-        JsonArray expectedParams = new JsonArray().add("param1");
+    @Test
+    void testGetClientWithNewClient() {
+        JsonObject config = new JsonObject().put("dataSourceName", "newDataSource");
 
-        // Mock a successful connection
-        when(jdbcClient.getConnection(any())).thenAnswer(invocation -> {
-        Handler<AsyncResult<SQLConnection>> handler = invocation.getArgument(0);
-        handler.handle(Future.succeededFuture(sqlConnection));
-        return null;
-        });
+        DatabaseClient client = factory.getClient(vertx, config);
 
-        // Mock a successful query
-        when(sqlConnection.queryWithParams(
-        eq(expectedSql),
-        argThat(params -> params.equals(expectedParams)), // Expect the JsonArray with "param1"
-        any())).thenAnswer(invocation -> {
-        Handler<AsyncResult<ResultSet>> handler = invocation.getArgument(2);
-        handler.handle(Future.succeededFuture(resultSet));
-        return null;
-        });
+        assertThat(client).isNotNull();
+        assertThat(client).isInstanceOf(Vertx3JdbcClient.class);
+    }
 
-        // Call the select method with params
-        dbClient.select(expectedSql, expectedParams)
-        .onComplete(testContext.succeeding(result -> testContext.verify(() -> {
-        assertSame(resultSet, result);
-        testContext.completeNow();
-        })));
-        }
+    @Test
+    void testGetClientWithoutDataSourceName() {
+        JsonObject config = new JsonObject();
+
+        assertThatThrownBy(() -> factory.getClient(vertx, config))
+                .isInstanceOf(InvalidJdbcConfigException.class)
+                .hasMessage("Data Source name is not Present");
+    }
+}
