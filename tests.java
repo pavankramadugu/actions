@@ -2,52 +2,76 @@ import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
 import org.mockito.Mockito;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-class DatabaseClientFactoryTest {
+@ExtendWith(MockitoExtension.class)
+public class JdbcClientTest {
+
+    @Mock
     private Vertx vertx;
-    private DatabaseClientFactory factory;
+
+    @Mock
+    private JsonObject config;
+
+    private JdbcClient jdbcClient;
 
     @BeforeEach
-    void setup() {
-        vertx = Mockito.mock(Vertx.class);
-        factory = DatabaseClientFactory.getInstance();
+    public void setup() {
+        // Instantiate the object under test
+        jdbcClient = new JdbcClient();
     }
 
     @Test
-    void testGetClientWithExistingClient() {
-        JsonObject config = new JsonObject().put("dataSourceName", "existingDataSource");
+    public void shouldReturnHikariJdbcClient() {
+        // Given
+        when(config.getString("CONNECTION_POOL")).thenReturn("HIKARI");
+        when(config.getString("dataSourceName")).thenReturn("myDataSource");
+        when(config.getJsonObject("connectionParams")).thenReturn(new JsonObject());
 
-        // Setup an existing client in the map
-        DatabaseClient existingClient = Mockito.mock(DatabaseClient.class);
-        factory.getClient(vertx, config);  // this line puts the client into the map
+        // When
+        JdbcClient result = jdbcClient.getJdbcClient(vertx, config);
 
-        DatabaseClient client = factory.getClient(vertx, config);
-
-        assertThat(client).isNotNull();
-        assertThat(client).isSameAs(existingClient);
+        // Then
+        assertNotNull(result);
+        assertTrue(result instanceof HikariJdbcClient);  // Assuming HikariJdbcClient is a subclass of JdbcClient
     }
 
     @Test
-    void testGetClientWithNewClient() {
-        JsonObject config = new JsonObject().put("dataSourceName", "newDataSource");
+    public void shouldReturnC3POJdbcClient() {
+        // Given
+        when(config.getString("CONNECTION_POOL")).thenReturn(null);
+        when(config.getString("dataSourceName")).thenReturn("myDataSource");
+        when(config.getJsonObject("connectionParams")).thenReturn(new JsonObject());
 
-        DatabaseClient client = factory.getClient(vertx, config);
+        // When
+        JdbcClient result = jdbcClient.getJdbcClient(vertx, config);
 
-        assertThat(client).isNotNull();
-        assertThat(client).isInstanceOf(Vertx3JdbcClient.class);
+        // Then
+        assertNotNull(result);
+        assertTrue(result instanceof C3POJdbcClient);  // Assuming C3POJdbcClient is a subclass of JdbcClient
     }
 
     @Test
-    void testGetClientWithoutDataSourceName() {
-        JsonObject config = new JsonObject();
+    public void shouldThrowExceptionWhenDataSourceNameMissing() {
+        // Given
+        when(config.getString("dataSourceName")).thenReturn(null);
 
-        assertThatThrownBy(() -> factory.getClient(vertx, config))
-                .isInstanceOf(InvalidJdbcConfigException.class)
-                .hasMessage("Data Source name is not Present");
+        // When & Then
+        assertThrows(InvalidJdbcConfigException.class, () -> jdbcClient.getJdbcClient(vertx, config));
+    }
+
+    @Test
+    public void shouldThrowExceptionWhenConnectionParamsMissing() {
+        // Given
+        when(config.getJsonObject("connectionParams")).thenReturn(null);
+
+        // When & Then
+        assertThrows(InvalidJdbcConfigException.class, () -> jdbcClient.getJdbcClient(vertx, config));
     }
 }
